@@ -1,0 +1,246 @@
+================================================================================
+PYNODE CONFIGURATION REFERENCE
+================================================================================
+
+This file documents every option in config.json.
+
+config.json is the SINGLE source of truth and is REQUIRED:
+- Deployed exe: config.json must sit in the same folder as the exe.
+- Running from source: config.json must be in the working directory (repo root).
+- A missing file, invalid JSON, or a missing key is a fatal startup error.
+- Unknown keys are ignored with a [CONFIG] WARNING (catches typos).
+- There are no built-in defaults and no environment variable overrides.
+- Config is read once at startup; restart the node after changes.
+
+================================================================================
+RPC SERVER (Pynode's own JSON-RPC interface)
+================================================================================
+
+[rpc.host]
+  Type: string
+  Shipped value: "127.0.0.1"
+  Description: Interface Pynode's HTTP JSON-RPC server binds to.
+  Security: Keep on 127.0.0.1 unless you understand the exposure -
+            the RPC server has NO authentication.
+
+[rpc.port]
+  Type: integer
+  Shipped value: 8888
+  Description: Port for Pynode's HTTP JSON-RPC server.
+  Usage: curl -X POST http://localhost:8888 -d '{"method": "getinfo"}'
+
+================================================================================
+NETWORK CONFIGURATION
+================================================================================
+
+[network.desired_outbound_peers]
+  Type: integer
+  Shipped value: 12
+  Description: Target number of outbound peer connections
+  Range: 1-50 recommended
+  Note: More peers = better redundancy but higher bandwidth
+
+[network.max_peers]
+  Type: integer
+  Shipped value: 20
+  Description: Maximum total connections (inbound + outbound)
+  Note: Must be >= desired_outbound_peers
+
+[network.enable_inbound]
+  Type: boolean
+  Shipped value: true
+  Description: Accept incoming peer connections
+  Set to false if behind firewall or NAT without port forwarding
+
+[network.listen_port]
+  Type: integer
+  Shipped value: 8338
+  Description: Port for inbound P2P connections
+  Note: Port 8333 is standard Bitcoin, but likely taken by Bitcoin Core
+  Firewall: Open this port if enable_inbound = true
+
+[network.listen_host]
+  Type: string
+  Shipped value: "0.0.0.0"
+  Description: Interface to listen on for inbound connections
+  Values:
+    "0.0.0.0" = all interfaces (recommended)
+    "127.0.0.1" = localhost only (no external connections)
+
+[network.start_peers]
+  Type: array of [host, port] arrays
+  Shipped value: List of 11 known Bitcoin nodes (IPv4 and IPv6)
+  Description: Initial peers to connect to on startup
+  Format: [["ip_or_hostname", port], ...]
+  Examples:
+    ["127.0.0.1", 8333]           # Local Bitcoin Core
+    ["seed.bitcoin.sipa.be", 8333] # DNS seed
+    ["2001:bc8::1", 8333]         # IPv6 address
+
+[network.peer_cache_file]
+  Type: string
+  Shipped value: "peer_cache.json"
+  Description: File to cache known-good peers between restarts
+  Auto-generated: Do not edit manually
+
+[network.peer_cache_min_count]
+  Type: integer
+  Shipped value: 6
+  Description: Minimum number of successful peers before caching
+
+================================================================================
+PROTOCOL SETTINGS
+================================================================================
+
+[protocol.magic_mainnet]
+  Type: hex string
+  Shipped value: "F9BEB4D9"
+  Description: Bitcoin mainnet magic bytes (network identifier)
+  Warning: Do NOT change unless pointing the node at another chain
+           (see Alternative Chain example below)
+
+[protocol.version]
+  Type: integer
+  Shipped value: 70016
+  Description: Bitcoin P2P protocol version
+  Note: Version 70016 supports SegWit and compact blocks
+
+[protocol.user_agent]
+  Type: string
+  Shipped value: "/pynode:0.1.0/"
+  Description: Identifier sent to peers during handshake
+  Format: "/client_name:version/"
+
+[protocol.genesis_header]
+  Type: hex string (exactly 80 bytes / 160 hex chars)
+  Shipped value: Bitcoin mainnet genesis header
+          (hashes to 000000000019d6...0a8ce26f)
+  Description: The chain's genesis block header. Single source of truth
+              for chain identity - HeaderChain and ForkHandler both
+              derive from it.
+  Note: To run an ALTERNATIVE chain, override this together with
+        protocol.magic_mainnet (the two values define a chain), and
+        point the node at a fresh runtime dir / empty headers.dat.
+  Warning: If headers.dat does not start with this genesis, the node
+           fails fast at startup with a clear error (mismatch guard).
+           Do NOT change for mainnet.
+
+================================================================================
+BLOCKCHAIN SETTINGS
+================================================================================
+
+[blockchain.download_blocks_from_height]
+  Type: integer
+  Shipped value: -1
+  Description: Start height for the block backfiller. The backfiller scans
+               from this height up to the header tip and downloads every
+               block that is missing from local storage (gap fill, not just
+               tail append).
+  Values:
+    -1 = auto: start from the lowest block already in storage
+         (waits for the first block if storage is empty)
+    0+ = explicit start height
+  Example: 840000 to cover the full Runes era (~100+ GB of blocks)
+
+[blockchain.fork_handler_max_depth]
+  Type: integer
+  Shipped value: 100
+  Description: Track last N blocks for reorganization detection
+  Range: 10-1000
+  Note: Higher = can detect deeper reorgs but uses more memory
+
+[blockchain.enable_tx_validation]
+  Type: boolean
+  Shipped value: true
+  Description: Validate transactions in received blocks/mempool messages
+
+[blockchain.backfill_inflight_per_peer]
+  Type: integer
+  Shipped value: 16
+  Description: Max blocks requested-but-undelivered per peer at any moment.
+               Blocks are dispensed from a queue and topped up as deliveries
+               arrive, so a serving peer is never flooded with a huge getdata
+               burst. Mirrors Bitcoin Core's 16-blocks-in-transit IBD limit.
+
+[blockchain.backfill_blocks_per_min_per_peer]
+  Type: integer
+  Shipped value: 600
+  Description: Cap on blocks requested from one peer per minute. 600 blocks
+               of ~1.7 MB (Runes era) is ~17 MB/min = ~2.3 Mbps sustained -
+               a reasonable ask of a volunteer node. Lower it to be gentler.
+
+================================================================================
+EXAMPLE CONFIGURATIONS
+================================================================================
+
+--- Alternative Chain (different genesis) ---
+Chain identity = genesis header + network magic. Override both, point at
+a fresh runtime dir (or delete the old headers.dat), and add that chain's
+seed peers. No code changes required.
+{
+  "protocol": {
+    "magic_mainnet": "<that chain's 4-byte magic, hex>",
+    "genesis_header": "<that chain's 80-byte genesis header, hex>"
+  },
+  "network": {
+    "start_peers": [["seed.example.chain", 9333]]
+  }
+}
+Note: a stale mainnet headers.dat with a new genesis is rejected at
+startup (mismatch guard) - use a clean runtime dir.
+
+--- Behind Firewall ---
+{
+  "network": {
+    "enable_inbound": false,
+    "desired_outbound_peers": 8
+  }
+}
+
+--- High-Performance Node ---
+{
+  "network": {
+    "desired_outbound_peers": 20,
+    "max_peers": 40,
+    "enable_inbound": true
+  },
+  "blockchain": {
+    "fork_handler_max_depth": 200
+  }
+}
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Issue: "[CONFIG] FATAL: config.json not found"
+Solution: config.json must sit next to the exe (deployed) or in the
+          working directory (source). It ships with the build.
+
+Issue: "[CONFIG] FATAL: invalid JSON in config.json"
+Solution: Validate JSON syntax (use jsonlint.com or VS Code).
+          The node refuses to start on a malformed config.
+
+Issue: "[CONFIG] FATAL: missing required key ..."
+Solution: Every documented key must exist. Copy the missing key from
+          this reference or from a fresh shipped config.json.
+
+Issue: "[CONFIG] WARNING: unknown key ..."
+Solution: Typo or leftover from an older version - the key is ignored.
+
+Issue: Changes not taking effect
+Solution: Restart the node - config is loaded once at startup.
+
+================================================================================
+SECURITY NOTES
+================================================================================
+
+1. The RPC server has NO authentication. Keep rpc.host on 127.0.0.1
+   unless the port is protected by other means.
+
+2. File permissions: Make config.json writable only by the node user.
+
+3. Inbound connections: Only enable if you understand port forwarding.
+   Malicious peers cannot steal funds but can waste bandwidth.
+
+================================================================================

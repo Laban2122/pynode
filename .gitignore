@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+*.log.old
+
+# Debug
+debug/
+
+# Data files (large, regenerated on sync)
+*.dat
+*.dat.*
+*.dat.backup*
+*.idx
+*.idx.*
+*.idx.backup*
+
+# Runtime cache and database files
+utxo_cache.json
+peer_cache.json
+utxo_index.db
+*.db
+*.cache
+
+# Build artifacts
+*.exe
+*.spec
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Tool specific files
+deploy.ps1
+
+# Sensitive files
+*.key
+*.pem
+secrets.py
+.env
+
+# Private working notes and retired tooling (kept locally, never published)
+creators_manual.md
+scratch/
+blockchain/old_hc_not_in_use.py
+docs/CONNECTION_ANALYSIS.md
+makeexe.py
+.github/copilot-instructions.md
+

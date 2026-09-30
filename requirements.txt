@@ -1,0 +1,11 @@
+# Pynode - Python Bitcoin Node Implementation
+# Required dependencies for running the node
+
+# HTTP server for RPC interface
+aiohttp>=3.9.0,<4.0.0
+
+# Bitcoin address encoding (bech32/segwit)
+bech32>=1.2.0,<2.0.0
+
+# DNS seeding for peer discovery
+dnspython>=2.6.0,<3.0.0

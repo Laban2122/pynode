@@ -1,0 +1,41 @@
+{
+  "rpc": {
+    "host": "127.0.0.1",
+    "port": 8888
+  },
+  "network": {
+    "desired_outbound_peers": 12,
+    "max_peers": 20,
+    "enable_inbound": true,
+    "listen_port": 8338,
+    "listen_host": "0.0.0.0",
+    "start_peers": [
+      ["103.246.186.144", 8333],
+      ["2001:41d0:602:21c6::1", 8333],
+      ["103.246.186.213", 8333],
+      ["136.24.32.19", 8333],
+      ["206.206.109.13", 8333],
+      ["203.11.72.0", 8333],
+      ["158.69.224.73", 8333],
+      ["2400:8901::f03c:92ff:fe4e:95f3", 8333],
+      ["2a02:16a:c200::15d", 8333],
+      ["2001:bc8:1201:715:ca1f:66ff:fec9:5ff0", 8333],
+      ["173.46.87.250", 8333]
+    ],
+    "peer_cache_file": "peer_cache.json",
+    "peer_cache_min_count": 6
+  },
+  "protocol": {
+    "magic_mainnet": "F9BEB4D9",
+    "version": 70016,
+    "user_agent": "/pynode:0.1.0/",
+    "genesis_header": "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c"
+  },
+  "blockchain": {
+    "download_blocks_from_height": 840000,
+    "fork_handler_max_depth": 100,
+    "enable_tx_validation": true,
+    "backfill_inflight_per_peer": 16,
+    "backfill_blocks_per_min_per_peer": 600
+  }
+}
