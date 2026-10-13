@@ -18,55 +18,116 @@ class BlockChain:
         
         self._load_index()
     
+    ENTRY_SIZE = 48  # hash(32) + offset(8) + size(4) + height(4)
+
     def _load_index(self):
-        """Load block index from index file"""
-        if os.path.exists(self.index_file):
-            try:
-                with open(self.index_file, 'rb') as f:
-                    data = f.read()
-                    stream = BytesIO(data)
-                    
-                    # Read index entries
-                    while True:
-                        # Format: hash (32 bytes) + offset (8 bytes) + size (4 bytes) + height (4 bytes)
-                        entry = stream.read(48)
-                        if len(entry) < 48:
-                            break
-                        
-                        block_hash = entry[0:32]
-                        offset = struct.unpack("<Q", entry[32:40])[0]
-                        size = struct.unpack("<I", entry[40:44])[0]
-                        height = struct.unpack("<i", entry[44:48])[0]
-                        
-                        self.index_by_hash[block_hash] = {
-                            'offset': offset,
-                            'size': size,
-                            'height': height
-                        }
-                        self.index_by_height[height] = block_hash
-                        
-                        if height > self.height:
-                            self.height = height
-                
-                print(f"[BlockChain] Loaded index: {len(self.index_by_hash)} blocks, height={self.height}")
-            except Exception as e:
-                print(f"[BlockChain] Error loading index: {e}")
-                self.index_by_hash = {}
-                self.index_by_height = {}
-                self.height = -1
-        else:
+        """Load the block index, then repair any torn tail from a crash.
+
+        Both files are append-only logs with no header, so a process that
+        dies mid-write leaves a partial record. Two kinds of damage:
+
+        * **A partial index entry.** The old loader stopped at a short
+          read and left the stray bytes in place, so the next appended
+          entry began mid-record and every entry after it decoded as
+          garbage. Truncate the index to a whole number of entries.
+
+        * **Block bytes with no index entry.** ``add_block`` takes its
+          offset from ``os.path.getsize()``, so block bytes written while
+          the matching index entry was not leave the data file longer than
+          the index believes. The next append then lands at the real end
+          of file while the index records a different offset, and every
+          later read is misaligned - the mechanism behind the 71-height
+          misalignment in docs/pynode-blockstore-corruption-report.md
+          (heights 939008-939078). Truncate the data file back to the end
+          of the last indexed block.
+
+        A read error is raised rather than swallowed: the old handler
+        reset the index to empty, which made the very next ``add_block``
+        write at offset 0 and overwrite the whole store.
+        """
+        if not os.path.exists(self.index_file):
             print(f"[BlockChain] No existing index file, starting fresh")
-    
+            return
+
+        try:
+            with open(self.index_file, 'rb') as f:
+                data = f.read()
+        except OSError as e:
+            raise RuntimeError(
+                f"cannot read block index {self.index_file}: {e}. "
+                f"Refusing to start with an empty index - that would "
+                f"overwrite {self.blocks_file} from offset 0."
+            ) from e
+
+        whole = len(data) - (len(data) % self.ENTRY_SIZE)
+        if whole != len(data):
+            print(f"[BlockChain] Index has a partial {len(data) - whole}-byte "
+                  f"tail from an interrupted write - truncating to {whole}")
+            with open(self.index_file, 'r+b') as f:
+                f.truncate(whole)
+            data = data[:whole]
+
+        stream = BytesIO(data)
+        data_end = 0
+        while True:
+            # Format: hash (32 bytes) + offset (8) + size (4) + height (4)
+            entry = stream.read(self.ENTRY_SIZE)
+            if len(entry) < self.ENTRY_SIZE:
+                break
+
+            block_hash = entry[0:32]
+            offset = struct.unpack("<Q", entry[32:40])[0]
+            size = struct.unpack("<I", entry[40:44])[0]
+            height = struct.unpack("<i", entry[44:48])[0]
+
+            self.index_by_hash[block_hash] = {
+                'offset': offset,
+                'size': size,
+                'height': height
+            }
+            self.index_by_height[height] = block_hash
+
+            if height > self.height:
+                self.height = height
+            if offset + size > data_end:
+                data_end = offset + size
+
+        print(f"[BlockChain] Loaded index: {len(self.index_by_hash)} blocks, "
+              f"height={self.height}")
+
+        if os.path.exists(self.blocks_file):
+            actual = os.path.getsize(self.blocks_file)
+            if actual > data_end:
+                print(f"[BlockChain] {self.blocks_file} is {actual - data_end} "
+                      f"bytes longer than the index accounts for - truncating "
+                      f"to {data_end}")
+                with open(self.blocks_file, 'r+b') as f:
+                    f.truncate(data_end)
+            elif actual < data_end:
+                raise RuntimeError(
+                    f"{self.blocks_file} is {data_end - actual} bytes SHORTER "
+                    f"than the index claims ({actual} vs {data_end}). The data "
+                    f"file has been truncated or replaced; reads would return "
+                    f"wrong blocks. Restore it or rebuild the store."
+                )
+
     def _save_index_entry(self, block_hash, offset, size, height):
-        """Append a single index entry to the index file"""
+        """Append one index entry and flush it to the platter.
+
+        The caller has already made the block bytes durable, so after this
+        returns the two files are consistent in that order: an entry never
+        points at bytes that are not there yet.
+        """
         with open(self.index_file, 'ab') as f:
-            # Format: hash (32 bytes) + offset (8 bytes) + size (4 bytes) + height (4 bytes)
+            # Format: hash (32 bytes) + offset (8) + size (4) + height (4)
             entry = block_hash
             entry += struct.pack("<Q", offset)
             entry += struct.pack("<I", size)
             entry += struct.pack("<i", height)
             f.write(entry)
-    
+            f.flush()
+            os.fsync(f.fileno())
+
     def _double_sha256(self, data):
         """Bitcoin uses double SHA256 for block hashing"""
         return hashlib.sha256(hashlib.sha256(data).digest()).digest()
@@ -108,10 +169,16 @@ class BlockChain:
         
         size = len(block_data)
         
-        # Append block to file
+        # Append the block and make it durable BEFORE the index entry that
+        # points at it. The reverse order is what turns a power cut into
+        # silent misalignment: the index entry survives, the block bytes it
+        # names do not, and every read past that point returns the wrong
+        # block while every file still looks intact.
         try:
             with open(self.blocks_file, 'ab') as f:
                 f.write(block_data)
+                f.flush()
+                os.fsync(f.fileno())
             
             # Update index
             self.index_by_hash[block_hash] = {
